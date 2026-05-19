@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, BackgroundTasks
 from twilio.rest import Client as TwilioClient
 from sarvamai import SarvamAI
-import google.generativeai as genai
+from google import genai
 import traceback
 
 load_dotenv()
@@ -22,8 +22,10 @@ TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")  # e.g. 'whatsapp:+1415
 # Clients
 sarvam = SarvamAI(api_subscription_key=SARVAM_KEY)
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+
+# New Google GenAI SDK — replaces deprecated google-generativeai
+gemini_client = genai.Client(api_key=GEMINI_KEY)
+GEMINI_MODEL = "gemini-2.0-flash"  # Replaces retired gemini-1.5-flash
 
 app = FastAPI()
 
@@ -54,7 +56,7 @@ def sarvam_transcribe(file_path: str) -> str:
     with open(file_path, "rb") as fh:
         resp = sarvam.speech_to_text.transcribe(
             file=fh,
-            model="saarika:v2.5",
+            model="saaras:v3",  # Updated from deprecated saarika:v2.5
             language_code="ta-IN"
         )
     transcript = getattr(resp, "transcript", None) or getattr(resp, "text", None)
@@ -82,8 +84,12 @@ Format:
 Verdict: [TRUE✅ / FALSE❌ / PARTIALLY TRUE 🆗/ UNCERTAIN🐟]
 Explanation: [2-3 lines in Tamil]
 """
-    resp = model.generate_content(prompt)
-    return getattr(resp, "text", str(resp))
+    # New SDK: use client.models.generate_content() instead of model.generate_content()
+    resp = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt
+    )
+    return resp.text
 
 def send_whatsapp_reply(to: str, text: str):
     """Send WhatsApp message via Twilio REST API."""

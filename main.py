@@ -1,5 +1,5 @@
 from sarvamai import SarvamAI
-import google.generativeai as genai
+from google import genai
 import os
 from dotenv import load_dotenv
 
@@ -17,7 +17,7 @@ client = SarvamAI(api_subscription_key=SARVAM_KEY)
 with open("your_file.wav", "rb") as audio_file:
     response = client.speech_to_text.transcribe(
         file=audio_file,
-        model="saarika:v2.5",
+        model="saaras:v3",  # Updated from deprecated saarika:v2.5
         language_code="ta-IN"
     )
 
@@ -26,8 +26,8 @@ transcript = getattr(response, "transcript", None) or getattr(response, "text", 
 print("Transcript:", transcript)
 
 # ---------------- Gemini Fact-Check ----------------
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+# New Google GenAI SDK — replaces deprecated google-generativeai
+gemini_client = genai.Client(api_key=GEMINI_KEY)
 
 fact_check_prompt = f"""
 You are an expert fact-checker for Indian and Tamil Nadu news.
@@ -47,6 +47,9 @@ Verdict: [TRUE / FALSE / PARTIALLY TRUE / UNCERTAIN]
 Explanation: [2-3 lines in Tamil]
 """
 
-response = model.generate_content(fact_check_prompt)
+response = gemini_client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=fact_check_prompt
+)
 print("\n--- FACT CHECK RESULT ---")
 print(response.text)
