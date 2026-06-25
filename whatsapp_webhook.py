@@ -94,7 +94,7 @@ Verdict: [TRUE✅ / FALSE❌ / PARTIALLY TRUE 🆗/ UNCERTAIN🐟]
 Explanation: [2-3 lines in Tamil]
 """
     response = groq_client.chat.completions.create(
-        model="groq/compound",  # Groq Compound with built-in live web search (updated from compound-beta)
+        model="groq/compound-mini",  # Groq Compound-mini (1 tool call limit to prevent 413 Payload Too Large errors)
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
