@@ -4,5 +4,5 @@ requests
 python-dotenv
 twilio
 sarvamai
-google-genai
+groq
 python-multipart

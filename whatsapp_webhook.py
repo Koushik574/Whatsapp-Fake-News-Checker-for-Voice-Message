@@ -7,25 +7,22 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, BackgroundTasks
 from twilio.rest import Client as TwilioClient
 from sarvamai import SarvamAI
-from google import genai
+from groq import Groq
 import traceback
 
 load_dotenv()
 
 # Environment variables
 SARVAM_KEY = os.getenv("SARVAM_API_KEY")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TWILIO_SID = os.getenv("TWILIO_SID")
 TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")  # e.g. 'whatsapp:+14155238886'
 
 # Clients
 sarvam = SarvamAI(api_subscription_key=SARVAM_KEY)
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH)
-
-# New Google GenAI SDK
-gemini_client = genai.Client(api_key=GEMINI_KEY)
-GEMINI_MODEL = "gemini-2.0-flash"
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 app = FastAPI()
 
@@ -56,7 +53,7 @@ def sarvam_transcribe(file_path: str) -> str:
     with open(file_path, "rb") as fh:
         resp = sarvam.speech_to_text.transcribe(
             file=fh,
-            model="saaras:v3",  # Updated from deprecated saarika:v2.5
+            model="saaras:v3",
             language_code="ta-IN"
         )
     transcript = getattr(resp, "transcript", None) or getattr(resp, "text", None)
@@ -65,11 +62,11 @@ def sarvam_transcribe(file_path: str) -> str:
         transcript = d.get("transcript") or d.get("text") or ""
     return transcript.strip()
 
-def gemini_fact_check(transcript: str) -> str:
-    """Call Gemini to fact-check the transcript and return formatted result."""
+def groq_fact_check(transcript: str) -> str:
+    """Call Groq Compound (with live web search) to fact-check and return result."""
     prompt = f"""
 You are an expert fact-checker for Indian and Tamil Nadu news.
-You have access to the latest news up to this moment.
+Search the web for the latest and most credible sources related to this claim.
 
 Fact to verify:
 "{transcript}"
@@ -84,11 +81,11 @@ Format:
 Verdict: [TRUE✅ / FALSE❌ / PARTIALLY TRUE 🆗/ UNCERTAIN🐟]
 Explanation: [2-3 lines in Tamil]
 """
-    resp = gemini_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt
+    response = groq_client.chat.completions.create(
+        model="compound-beta",  # Groq Compound with built-in live web search
+        messages=[{"role": "user", "content": prompt}]
     )
-    return resp.text
+    return response.choices[0].message.content
 
 def send_whatsapp_reply(to: str, text: str):
     """Send WhatsApp message via Twilio REST API."""
@@ -99,6 +96,13 @@ def send_whatsapp_reply(to: str, text: str):
     )
 
 def process_incoming(from_number: str, body: str, num_media: str, media_url: str):
+    """
+    Full processing pipeline:
+      - If media present: download -> Sarvam ASR -> transcript
+      - else: use text body
+      - Groq Compound fact-check (with live web search)
+      - send reply via Twilio
+    """
     local_path = None
     try:
         if num_media and int(num_media) > 0 and media_url:
@@ -112,7 +116,7 @@ def process_incoming(from_number: str, body: str, num_media: str, media_url: str
             send_whatsapp_reply(from_number, reply)
             return
 
-        fact_result = gemini_fact_check(transcript)
+        fact_result = groq_fact_check(transcript)
         send_whatsapp_reply(from_number, f"Transcript:\n{transcript}\n\nFact-check:\n{fact_result}")
 
     except Exception as e:
@@ -134,6 +138,10 @@ async def root():
 
 @app.post("/twilio-webhook")
 async def twilio_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Twilio will POST form-encoded data to this endpoint.
+    We'll enqueue the processing as a background task to avoid webhook timeouts.
+    """
     form = await request.form()
     print("Incoming webhook data:", dict(form))
     from_number = form.get("From")
