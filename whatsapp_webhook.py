@@ -2,6 +2,7 @@ import os
 import uuid
 import requests
 import tempfile
+import logging
 from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, BackgroundTasks
@@ -9,6 +10,10 @@ from twilio.rest import Client as TwilioClient
 from sarvamai import SarvamAI
 from groq import Groq
 import traceback
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -18,6 +23,13 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TWILIO_SID = os.getenv("TWILIO_SID")
 TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")  # e.g. 'whatsapp:+14155238886'
+
+logger.info("Initializing clients...")
+logger.info(f"SARVAM_API_KEY configured: {bool(SARVAM_KEY)}")
+logger.info(f"GROQ_API_KEY configured: {bool(GROQ_API_KEY)}")
+logger.info(f"TWILIO_SID configured: {bool(TWILIO_SID)}")
+logger.info(f"TWILIO_AUTH_TOKEN configured: {bool(TWILIO_AUTH)}")
+logger.info(f"TWILIO_WHATSAPP_FROM: {TWILIO_WHATSAPP_FROM}")
 
 # Clients
 sarvam = SarvamAI(api_subscription_key=SARVAM_KEY)
@@ -82,7 +94,7 @@ Verdict: [TRUE✅ / FALSE❌ / PARTIALLY TRUE 🆗/ UNCERTAIN🐟]
 Explanation: [2-3 lines in Tamil]
 """
     response = groq_client.chat.completions.create(
-        model="compound-beta",  # Groq Compound with built-in live web search
+        model="groq/compound",  # Groq Compound with built-in live web search (updated from compound-beta)
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
@@ -105,24 +117,36 @@ def process_incoming(from_number: str, body: str, num_media: str, media_url: str
     """
     local_path = None
     try:
+        logger.info(f"Processing incoming message from: {from_number}. NumMedia: {num_media}, MediaUrl: {media_url}")
         if num_media and int(num_media) > 0 and media_url:
+            logger.info("Downloading media from Twilio...")
             local_path = download_media(media_url)
+            logger.info(f"Media downloaded to {local_path}. Starting transcription via Sarvam AI...")
             transcript = sarvam_transcribe(local_path)
+            logger.info(f"ASR transcription result: '{transcript}'")
         else:
             transcript = (body or "").strip()
+            logger.info(f"No media. Using text body: '{transcript}'")
 
         if not transcript:
             reply = "தகவல் கிடைக்கவில்லை — தயவுசெய்து தெளிவாக ஒரு voice note அனுப்பவும்."
+            logger.warning("No text or audio transcription resolved. Sending empty transcript reply.")
             send_whatsapp_reply(from_number, reply)
             return
 
+        logger.info("Initiating Groq Fact-Check compound model run...")
         fact_result = groq_fact_check(transcript)
+        logger.info(f"Groq Fact-Check completed successfully: Verdict summary: \n{fact_result}")
         send_whatsapp_reply(from_number, f"Transcript:\n{transcript}\n\nFact-check:\n{fact_result}")
+        logger.info("Reply successfully sent back to user.")
 
     except Exception as e:
         error_msg = f"Processing error: {type(e).__name__} - {e}\n{traceback.format_exc()}"
-        print(error_msg)
-        send_whatsapp_reply(from_number, "சமையலில் பிழை: பிறகு முயற்சிக்கவும்.")
+        logger.error(error_msg)
+        try:
+            send_whatsapp_reply(from_number, "சமையலில் பிழை: பிறகு முயற்சிக்கவும்.")
+        except Exception as send_err:
+            logger.error(f"Failed to send failure reply: {send_err}")
 
     finally:
         if local_path and os.path.exists(local_path):
@@ -143,7 +167,7 @@ async def twilio_webhook(request: Request, background_tasks: BackgroundTasks):
     We'll enqueue the processing as a background task to avoid webhook timeouts.
     """
     form = await request.form()
-    print("Incoming webhook data:", dict(form))
+    logger.info(f"Incoming webhook data: {dict(form)}")
     from_number = form.get("From")
     body = form.get("Body", "")
     num_media = form.get("NumMedia", "0")
