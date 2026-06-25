@@ -4,5 +4,5 @@ requests
 python-dotenv
 twilio
 sarvamai
-google-generativeai
+google-genai
 python-multipart
